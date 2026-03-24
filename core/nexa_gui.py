@@ -1,5 +1,5 @@
 """
-NEXA GUI v1.10.4 - pywebview tabanlı modern arayüz
+NEXA GUI v1.11.8 - pywebview tabanlı modern arayüz
 Dönen daire animasyonu (standart mod) + ses dalgası (ses modu)
 """
 
@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "v1.10.4"
+VERSION = "v1.11.8"
 
 HTML = """
 <!DOCTYPE html>
@@ -391,7 +391,7 @@ HTML = """
 <body>
 
 <header>
-  <div class="header-version" id="version">v1.10.4</div>
+  <div class="header-version" id="version">v1.11.8</div>
   <div class="header-title">NEXA — ASSISTANT FROM THE FUTURE</div>
   <div class="header-clock" id="clock">00:00:00</div>
 </header>
@@ -422,7 +422,7 @@ HTML = """
   <div class="chat-wrapper">
     <div class="chat-area" id="chatArea"></div>
     <div class="input-area">
-      <input class="text-input" id="textInput" type="text" placeholder="Komut girin..." />
+      <input class="text-input" id="textInput" type="text" placeholder="Enter a command..." />
       <button class="btn" id="sendBtn" onclick="sendText()">GÖNDER</button>
       <button class="btn btn-mic" id="micBtn" onclick="toggleMic()">🎤</button>
     </div>
@@ -538,8 +538,8 @@ function setSTTStatus(state) {
   const dot = document.getElementById('sttDot');
   const label = document.getElementById('sttLabel');
   dot.className = 'stt-dot ' + state;
-  const labels = { listening: 'DİNLİYOR', processing: 'İŞLİYOR', waiting: 'BEKLİYOR' };
-  label.textContent = labels[state] || 'BEKLİYOR';
+  const labels = { listening: 'LISTENING', processing: 'PROCESSING', waiting: 'WAITING' };
+  label.textContent = labels[state] || 'WAITING';
 }
 
 // ── SES MODU AÇ/KAPAT ──
@@ -649,7 +649,7 @@ window.addEventListener('load', () => {
 """
 
 class NexaAPI:
-    """Python tarafı — pywebview JS bridge"""
+    """Python side — pywebview JS bridge"""
 
     def __init__(self):
         self.window = None
@@ -657,28 +657,29 @@ class NexaAPI:
         self._core_thread = None
         self._core = None
         self._core_ready = threading.Event()
+        self._history = []  # Konuşma hafızası
 
     def set_window(self, window):
         self.window = window
 
     def gui_ready(self):
-        """GUI hazır olduğunda çağrılır"""
-        print("✅ on_ready çağrıldı!")
-        print("✅ gui_ready çağrıldı!")
+        """Called when the GUI is ready."""
+        
+        print("✅ GUI bridge connected.")
         self.window.evaluate_js(f"setVersion('{VERSION}')") 
         self._start_core()
 
     def _start_core(self):
-        """nexa_core'u ayrı thread'de başlatır"""
+        """Loads nexa_core in a separate thread."""
         def run():
-            print("🚀 Core yükleniyor...")
+            print("🚀 Loading core...")
             try:
                 import importlib.util, sys
                 core_path = Path(__file__).parent / "core" / "nexa_core.py"
                 if not core_path.exists():
                     core_path = Path(__file__).parent / "nexa_core.py"
 
-                print(f"📂 Core path: {core_path} | Var mı: {core_path.exists()}")
+                print(f"📂 Core path: {core_path} | Exists: {core_path.exists()}")
                 spec = importlib.util.spec_from_file_location("nexa_core", core_path)
                 mod = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(mod)
@@ -704,33 +705,33 @@ class NexaAPI:
             except Exception as e:
                 import traceback
                 self._core_ready.set()
-                self._add_message("Nexa", f"Core yüklenemedi: {e}\n{traceback.format_exc()}")
+                self._add_message("Nexa", f"Core failed to load: {e}\n{traceback.format_exc()}")
 
         self._core_thread = threading.Thread(target=run, daemon=True)
         self._core_thread.start()
 
     def send_text(self, text: str):
-        """Kullanıcı text gönderdi"""
+        """Called when the user sends a text message."""
         def process():
             try:
                 self._core_ready.wait(timeout=120)
                 if not self._core:
-                    self._add_message("Nexa", "Core henüz hazır değil, lütfen bekleyin.")
+                    self._add_message("Nexa", "Core is not ready yet, please wait.")
                     return
-                reply, _ = self._core.ask_nexa(text, [])
+                reply, self._history = self._core.ask_nexa(text, self._history)
                 self._add_message("Nexa", reply)
                 threading.Thread(target=self._core.speak, args=(reply,), daemon=True).start()
             except Exception as e:
-                self._add_message("Nexa", f"Hata: {e}")
+                self._add_message("Nexa", f"Error: {e}")
         threading.Thread(target=process, daemon=True).start()
 
     def start_listening(self):
-        """Mikrofon dinlemeye başla"""
+        """Start microphone listening."""
         def listen():
             try:
                 self._core_ready.wait(timeout=120)
                 if not self._core:
-                    self._add_message("Nexa", "Core henüz hazır değil.")
+                    self._add_message("Nexa", "Core is not ready yet.")
                     return
                 self._listening = True
                 self._update_stt("listening")
@@ -744,12 +745,12 @@ class NexaAPI:
                 if text:
                     self._add_message("You", text)
                     self._update_stt("processing")
-                    reply, _ = self._core.ask_nexa(text, [])
+                    reply, self._history = self._core.ask_nexa(text, self._history)
                     self._add_message("Nexa", reply)
                     threading.Thread(target=self._core.speak, args=(reply,), daemon=True).start()
 
             except Exception as e:
-                self._add_message("Nexa", f"Dinleme hatası: {e}")
+                self._add_message("Nexa", f"Listening error: {e}")
             finally:
                 self._listening = False
                 self._update_stt("waiting")
